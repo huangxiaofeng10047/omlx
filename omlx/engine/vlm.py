@@ -161,7 +161,7 @@ def _attach_vlm_tokenizer_runtime(tokenizer: Any, model_path: Path, eos_token_id
 def _load_cohere2_moe_text_model(
     model_name: str,
     *,
-    trust_remote_code: bool = False,
+    trust_remote_code: bool = True,
 ):
     """Load Cohere2 MoE through mlx-vlm with a tokenizer-only fallback."""
     from mlx_vlm.utils import get_model_path, load_model, load_processor
@@ -1120,7 +1120,7 @@ class VLMBatchedEngine(BaseEngine):
     def __init__(
         self,
         model_name: str,
-        trust_remote_code: bool = False,
+        trust_remote_code: bool = True,
         scheduler_config: Any | None = None,
         stream_interval: int = 1,
         enable_thinking: bool | None = None,

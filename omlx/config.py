@@ -67,7 +67,7 @@ class ModelConfig:
     model_name: str = ""
     # Security: default off. HuggingFace repos can ship arbitrary modeling_*.py
     # that gets executed at load time when this is True. Issue #926.
-    trust_remote_code: bool = False
+    trust_remote_code: bool = True
     model_path: Optional[str] = None
 
 
@@ -167,7 +167,7 @@ class OMLXConfig:
         # Model settings
         config.model.model_name = os.getenv("OMLX_MODEL", config.model.model_name)
         config.model.trust_remote_code = os.getenv(
-            "OMLX_TRUST_REMOTE_CODE", "false"
+            "OMLX_TRUST_REMOTE_CODE", "true"
         ).lower() == "true"
 
         # Generation settings

@@ -3139,7 +3139,7 @@ def quantize_oq_streaming(
     dtype: str = "bfloat16",
     preserve_mtp: bool = False,
     auto_proxy_sensitivity: bool = True,
-    trust_remote_code: bool = False,
+    trust_remote_code: bool = True,
 ) -> None:
     """Tensor-by-tensor quantization. Memory: ~3-4GB regardless of model size.
 
@@ -4242,7 +4242,7 @@ def _measure_sensitivity(
     calib_dataset="code_multilingual",
     num_samples=32,
     seq_length=256,
-    trust_remote_code: bool = False,
+    trust_remote_code: bool = True,
 ):
     """Measure sensitivity by loading model temporarily. Used by streaming path."""
     from omlx.utils.model_loading import (
@@ -4367,7 +4367,7 @@ def _build_proxy_for_sensitivity(
     config: dict | None = None,
     dtype: str,
     working_dir: str | None = None,
-    trust_remote_code: bool = False,
+    trust_remote_code: bool = True,
 ) -> Path:
     """Build a temporary uniform 4-bit proxy for sensitivity measurement.
 
@@ -4401,7 +4401,7 @@ def _build_streaming_proxy_for_sensitivity(
     output_path: Path,
     *,
     dtype: str,
-    trust_remote_code: bool = False,
+    trust_remote_code: bool = True,
 ) -> None:
     """Build a loadable 4-bit sensitivity proxy without loading the source.
 
@@ -4608,7 +4608,7 @@ def _measure_sensitivity_from_quantized_model(
     calib_dataset="code_multilingual",
     num_samples=32,
     seq_length=256,
-    trust_remote_code: bool = False,
+    trust_remote_code: bool = True,
 ):
     """Measure sensitivity via re-quantization on a quantized model.
 

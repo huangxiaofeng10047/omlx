@@ -120,11 +120,11 @@ class TestModelConfig:
         """Test custom configuration values."""
         config = ModelConfig(
             model_name="llama-3.1-8b",
-            trust_remote_code=False,
+            trust_remote_code=True,
             model_path="/path/to/model",
         )
         assert config.model_name == "llama-3.1-8b"
-        assert config.trust_remote_code is False
+        assert config.trust_remote_code is None
         assert config.model_path == "/path/to/model"
 
 

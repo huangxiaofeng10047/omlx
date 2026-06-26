@@ -169,7 +169,7 @@
                 max_tool_result_tokens: null,
                 ctKwargEntries: [],
                 is_diffusion_model: false,
-                trust_remote_code: false,
+                trust_remote_code: true,
             },
             savingModelSettings: false,
             loadingGenDefaults: false,

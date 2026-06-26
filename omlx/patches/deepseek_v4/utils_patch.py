@@ -109,7 +109,7 @@ def _build_patched_load_model() -> Callable:
         strict: bool = True,
         model_config: dict[str, Any] | None = None,
         get_model_classes: Callable = default_get_classes,
-        trust_remote_code: bool = False,
+        trust_remote_code: bool = True,
     ) -> tuple[nn.Module, dict]:
         config = _utils.load_config(model_path)
         if model_config is not None:

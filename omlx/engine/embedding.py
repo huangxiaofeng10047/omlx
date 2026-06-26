@@ -35,7 +35,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
     def __init__(
         self,
         model_name: str,
-        trust_remote_code: bool = False,
+        trust_remote_code: bool = True,
         batch_size: int | None = None,
         *,
         scheduler_config: Any | None = None,

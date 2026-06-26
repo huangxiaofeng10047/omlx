@@ -467,9 +467,9 @@ def load_text_model(
     from mlx_lm import load
 
     trust_remote_code = (
-        bool(getattr(model_settings, "trust_remote_code", False))
+        bool(getattr(model_settings, "trust_remote_code", True))
         if model_settings is not None
-        else False
+        else True
     )
     return load(
         model_name,

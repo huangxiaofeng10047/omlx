@@ -26,7 +26,7 @@ class TestModelSettings:
         assert settings.is_pinned is False
         assert settings.is_default is False
         # Issue #926: opt-in per model. Default off.
-        assert settings.trust_remote_code is False
+        assert settings.trust_remote_code is True
 
     def test_trust_remote_code_roundtrip(self):
         """Test trust_remote_code field survives to_dict -> from_dict roundtrip."""

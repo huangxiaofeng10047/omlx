@@ -84,6 +84,7 @@ VLM_ARCHITECTURES = {
     "Gemma3ForConditionalGeneration",
     "Gemma4ForConditionalGeneration",
     "InternVLChatModel",
+    "InternS2PreviewForConditionalGeneration",  # Intern-S2-Preview
     "Idefics3ForConditionalGeneration",
     "PaliGemmaForConditionalGeneration",
     "Phi3VForCausalLM",

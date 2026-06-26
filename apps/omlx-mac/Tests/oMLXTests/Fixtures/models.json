@@ -75,7 +75,7 @@
                 "vlm_mtp_draft_block_size": null,
                 "is_pinned": false,
                 "is_default": true,
-                "trust_remote_code": false,
+                "trust_remote_code": true,
                 "display_name": null,
                 "description": null,
                 "active_profile_name": "qwen36-thinking-coding"

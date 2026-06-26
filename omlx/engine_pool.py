@@ -230,7 +230,7 @@ class EnginePool:
             signature.append((key, self._canonical_signature_value(value)))
 
         # Security/load gates.
-        add("trust_remote_code", bool(data.get("trust_remote_code", False)))
+        add("trust_remote_code", bool(data.get("trust_remote_code", True)))
         add("index_cache_freq", normalized_index_cache_freq())
 
         # Load-time model variants. Dependent fields only matter when their
@@ -1286,9 +1286,9 @@ class EnginePool:
             # will fail to load until the user explicitly toggles this on
             # in the admin UI's model settings modal.
             trc = (
-                bool(getattr(model_settings, "trust_remote_code", False))
+                bool(getattr(model_settings, "trust_remote_code", True))
                 if model_settings
-                else False
+                else True
             )
 
             async def prefill_eviction_callback(

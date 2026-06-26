@@ -244,13 +244,13 @@ class TestBatchedEngineInitialization:
 
         engine = BatchedEngine(
             model_name="test-model",
-            trust_remote_code=False,
+            trust_remote_code=True,
             stream_interval=5,
             enable_thinking=True,
         )
 
         assert engine._model_name == "test-model"
-        assert engine._trust_remote_code is False
+        assert engine._trust_remote_code is True
         assert engine._stream_interval == 5
         assert engine._enable_thinking is True
         assert engine._loaded is False
