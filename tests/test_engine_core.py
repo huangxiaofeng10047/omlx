@@ -18,8 +18,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from omlx.engine_core import AsyncEngineCore, EngineConfig, EngineCore
-from omlx.exceptions import PrefillMemoryExceededError
+from omlx.engine_core import (
+    AsyncEngineCore,
+    EngineConfig,
+    EngineCore,
+    _raise_request_output_error,
+)
+from omlx.exceptions import PrefillMemoryAbortedError, PrefillMemoryExceededError
 from omlx.output_collector import RequestOutputCollector
 from omlx.request import RequestOutput, SamplingParams
 from omlx.scheduler import SchedulerConfig, SchedulerOutput
@@ -684,7 +689,12 @@ class TestEngineCoreClose:
             timeout_future = MagicMock()
             timeout_future.result.side_effect = concurrent.futures.TimeoutError
             executor = MagicMock()
-            executor.submit.side_effect = [ok_future, ok_future, timeout_future]
+            executor.submit.side_effect = [
+                ok_future,
+                ok_future,
+                ok_future,
+                timeout_future,
+            ]
             engine._mlx_executor = executor
 
             with (
@@ -1192,6 +1202,136 @@ class TestEngineCoreAbortAllRequests:
                     event = engine._finished_events.get(rid)
                     if event is not None:
                         assert event.is_set()
+            finally:
+                await engine.stop()
+                engine.close()
+
+    @pytest.mark.asyncio
+    async def test_abort_all_requests_skips_requests_already_aborted(
+        self, mock_model, mock_tokenizer
+    ):
+        """Repeated bulk aborts do not report progress or duplicate errors."""
+        with patch("omlx.engine_core.get_registry") as mock_registry:
+            mock_registry.return_value.acquire.return_value = True
+
+            engine = EngineCore(model=mock_model, tokenizer=mock_tokenizer)
+
+            try:
+                await engine.start()
+                engine.scheduler.has_requests = lambda: False
+                request_id = await engine.add_request(prompt="Hello")
+
+                first_count = await engine.abort_all_requests()
+                second_count = await engine.abort_all_requests()
+
+                assert (first_count, second_count) == (1, 0)
+                collector = engine._output_collectors[request_id]
+                output = collector.get_nowait()
+                assert output is not None
+                assert output.new_text.count("[Error:") == 1
+                assert collector.get_nowait() is None
+            finally:
+                await engine.stop()
+                engine.close()
+
+    @pytest.mark.asyncio
+    async def test_abort_all_requests_uses_explicit_unload_reason(
+        self, mock_model, mock_tokenizer
+    ):
+        """Manual unload must not report a fake memory-pressure failure."""
+        with patch("omlx.engine_core.get_registry") as mock_registry:
+            mock_registry.return_value.acquire.return_value = True
+            engine = EngineCore(model=mock_model, tokenizer=mock_tokenizer)
+
+            try:
+                await engine.start()
+                engine.scheduler.has_requests = lambda: False
+                request_id = await engine.add_request(prompt="Hello")
+
+                count = await engine.abort_all_requests(
+                    reason="Request aborted because the model is being unloaded",
+                    error_code="model_unloading",
+                )
+
+                assert count == 1
+                output = engine._output_collectors[request_id].get_nowait()
+                assert output.error == (
+                    "Request aborted because the model is being unloaded"
+                )
+                assert output.error_code == "model_unloading"
+                assert output.error_metadata == {
+                    "request_id": request_id,
+                    "limit_bytes": None,
+                }
+            finally:
+                await engine.stop()
+                engine.close()
+
+    @pytest.mark.asyncio
+    async def test_abort_all_requests_names_tripped_watermark(
+        self, mock_model, mock_tokenizer
+    ):
+        """The abort message names the hard watermark that tripped, not just
+        the ceiling above it (issue #2321)."""
+        with patch("omlx.engine_core.get_registry") as mock_registry:
+            mock_registry.return_value.acquire.return_value = True
+
+            engine = EngineCore(model=mock_model, tokenizer=mock_tokenizer)
+
+            try:
+                await engine.start()
+                engine.scheduler.has_requests = lambda: False
+                engine.scheduler._memory_hard_limit_bytes = 30 * 1024**3
+                engine.scheduler._memory_hard_watermark_bytes = int(
+                    30 * 1024**3 * 0.95
+                )
+
+                rid = await engine.add_request(prompt="Hello")
+                await engine.abort_all_requests()
+
+                collector = engine._output_collectors.get(rid)
+                assert collector is not None
+                output = collector.get_nowait()
+                assert "abort threshold (hard watermark) 28.5 GB" in output.error
+                assert "ceiling 30.0 GB" in output.error
+            finally:
+                await engine.stop()
+                engine.close()
+
+    @pytest.mark.asyncio
+    async def test_abort_all_requests_names_binding_ceiling(
+        self, mock_model, mock_tokenizer
+    ):
+        """A user already on the most permissive tier needs to know which
+        ceiling aborted them; generic "loosen memory_guard_tier" advice
+        leaves them with nothing to turn (#2362)."""
+        with patch("omlx.engine_core.get_registry") as mock_registry:
+            mock_registry.return_value.acquire.return_value = True
+
+            engine = EngineCore(model=mock_model, tokenizer=mock_tokenizer)
+
+            try:
+                await engine.start()
+                engine.scheduler.has_requests = lambda: False
+                sched = engine.scheduler
+                sched._memory_hard_limit_bytes = 30 * 1024**3
+                sched._memory_hard_watermark_bytes = int(30 * 1024**3 * 0.95)
+                # Metal cap is the smallest of the three: only the kernel
+                # sysctl can move this abort.
+                sched._memory_static_ceiling_bytes = 120 * 1024**3
+                sched._memory_dynamic_ceiling_bytes = 64 * 1024**3
+                sched._memory_metal_cap_bytes = 30 * 1024**3
+                sched._memory_guard_tier = "aggressive"
+
+                rid = await engine.add_request(prompt="Hello")
+                await engine.abort_all_requests()
+
+                collector = engine._output_collectors.get(rid)
+                assert collector is not None
+                output = collector.get_nowait()
+                assert "metal_cap ceiling 30.0 GB" in output.error
+                assert "iogpu.wired_limit_mb" in output.error
+                assert "lower memory_guard_tier" not in output.error
             finally:
                 await engine.stop()
                 engine.close()
@@ -1762,3 +1902,50 @@ class TestOrphanedCollectorReaping:
             finally:
                 await engine.stop()
                 engine.close()
+
+
+class TestMemoryAbortErrorSurface:
+    """The mid-prefill memory abort must surface like the pre-flight guard.
+
+    The enforcer's abort output used to carry only ``error``, so
+    ``_raise_request_output_error`` fell through to a bare RuntimeError.
+    Nothing upstream recognized it as a memory rejection: the JSON keepalive
+    wrapper (which already handles PrefillMemoryExceededError) let it escape,
+    the response generator died mid-body, and the client saw a truncated read
+    plus a 500 traceback instead of the actionable 400 the pre-flight path
+    returns for the same condition.
+    """
+
+    def _abort_output(self, **overrides):
+        payload = dict(
+            request_id="req-abort",
+            finished=True,
+            finish_reason="error",
+            error=(
+                "Request aborted: process memory limit exceeded (usage 4.4 GB, "
+                "abort threshold (hard watermark) 4.1 GB, dynamic ceiling 4.3 GB)."
+            ),
+            error_code="prefill_memory_aborted",
+            error_metadata={"request_id": "req-abort", "limit_bytes": 4_100_000_000},
+        )
+        payload.update(overrides)
+        return RequestOutput(**payload)
+
+    def test_abort_code_raises_typed_error(self):
+        with pytest.raises(PrefillMemoryAbortedError) as exc:
+            _raise_request_output_error(self._abort_output())
+        assert exc.value.request_id == "req-abort"
+        assert exc.value.limit_bytes == 4_100_000_000
+
+    def test_abort_error_keeps_the_400_mapping(self):
+        """Subclassing is what routes it to the existing handler / keepalive
+        catch, so the relationship is part of the contract, not an accident."""
+        with pytest.raises(PrefillMemoryExceededError):
+            _raise_request_output_error(self._abort_output())
+
+    def test_uncoded_error_still_raises_runtime_error(self):
+        with pytest.raises(RuntimeError) as exc:
+            _raise_request_output_error(
+                self._abort_output(error_code=None, error_metadata=None)
+            )
+        assert not isinstance(exc.value, PrefillMemoryExceededError)

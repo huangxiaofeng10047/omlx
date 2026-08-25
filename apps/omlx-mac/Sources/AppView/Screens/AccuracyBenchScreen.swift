@@ -298,8 +298,8 @@ private struct ConfigurationSection: View {
                                           comment: "Accuracy Bench section subtitle while models are loading") }
         let count = selectedBenchmarks.count
         return String(localized: "bench.accuracy.subtitle.selected_count",
-                      defaultValue: "\(count) benchmark\(count == 1 ? "" : "s") selected",
-                      comment: "Accuracy Bench section subtitle showing how many benchmarks the user has picked; placeholder is the count with pluralization")
+                      defaultValue: "Benchmarks selected: \(count)",
+                      comment: "Accuracy Bench section subtitle showing how many benchmarks the user has picked; placeholder is the count")
     }
 
     private var benchmarksSubtitle: String {
@@ -630,7 +630,7 @@ private struct ResultsSection: View {
                        defaultValue: "Results",
                        comment: "Section header for the Accuracy Bench results list"),
                 subtitle: String(localized: "bench.accuracy.results.subtitle",
-                                 defaultValue: "\(results.count) result\(results.count == 1 ? "" : "s")",
+                                 defaultValue: "Results: \(results.count)",
                                  comment: "Subtitle showing the number of accumulated Accuracy Bench results")
             ) {
                 Button(String(localized: "bench.accuracy.results.clear_all",
@@ -682,6 +682,10 @@ private struct ResultCard: View {
                         .foregroundStyle(theme.textSecondary)
                 }
                 Spacer(minLength: 0)
+            }
+
+            if let upload = result.upload {
+                UploadStatusRow(upload: upload)
             }
 
             if result.categoryScores?.isEmpty == false {
@@ -747,6 +751,72 @@ private struct Pill: View {
             .padding(.vertical, 1)
             .background(color.opacity(0.12))
             .clipShape(Capsule())
+    }
+}
+
+/// Community upload outcome for one suite. Mirrors the Throughput Bench
+/// UploadRow idiom: green check on success, doc icon for a duplicate the
+/// leaderboard already had, red x + message on failure.
+private struct UploadStatusRow: View {
+    let upload: AccuracyUploadDTO
+
+    @Environment(\.omlxTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if upload.skipped != nil {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.textTertiary)
+                Text(String(localized: "bench.accuracy.upload.skipped_min",
+                            defaultValue: "Not uploaded (needs at least 100 questions)",
+                            comment: "Accuracy result card status when the run was below the community upload minimum"))
+                    .font(.omlxText(11))
+                    .foregroundStyle(theme.textTertiary)
+                Spacer(minLength: 0)
+            } else if let err = upload.error, !err.isEmpty {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.redDot)
+                Text(String(localized: "bench.accuracy.upload.failed",
+                            defaultValue: "Community upload failed",
+                            comment: "Accuracy result card status when the omlx.ai upload failed"))
+                    .font(.omlxText(11))
+                    .foregroundStyle(theme.redDot)
+                Text(err)
+                    .font(.omlxText(11))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            } else if let urlString = upload.url, let url = URL(string: urlString) {
+                Image(systemName: upload.duplicate == true
+                      ? "document.on.document"
+                      : "checkmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(upload.duplicate == true ? theme.textTertiary : theme.greenDot)
+                Text(upload.duplicate == true
+                     ? String(localized: "bench.accuracy.upload.already",
+                              defaultValue: "Already on omlx.ai",
+                              comment: "Accuracy result card status when the leaderboard already has this result")
+                     : String(localized: "bench.accuracy.upload.submitted",
+                              defaultValue: "Uploaded to omlx.ai",
+                              comment: "Accuracy result card status after a successful community upload"))
+                    .font(.omlxText(11))
+                    .foregroundStyle(theme.textSecondary)
+                Spacer(minLength: 0)
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    Label(String(localized: "common.open",
+                                 defaultValue: "Open",
+                                 comment: "Generic Open button label"),
+                          systemImage: "arrow.up.right.square")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.omlx(.plain, size: .small))
+            }
+        }
     }
 }
 

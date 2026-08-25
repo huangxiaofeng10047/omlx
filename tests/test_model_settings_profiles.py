@@ -221,16 +221,139 @@ class TestApplyProfile:
         assert again.active_profile_name == "coding"
         assert again.temperature == 0.0
 
-    def test_apply_merges_leaves_unset_fields_alone(self, mgr):
-        # Pre-existing settings
-        pre = ModelSettings(temperature=0.9, top_p=0.5, top_k=40)
+    def test_apply_resets_absent_universal_and_preserves_model_specific(self, mgr):
+        pre = ModelSettings(
+            temperature=0.9,
+            top_p=0.5,
+            top_k=40,
+            max_tokens=512,
+            dflash_enabled=True,
+            ttl_seconds=300,
+            is_pinned=True,
+        )
         mgr.set_settings("m", pre)
         mgr.save_profile("m", "coding", "Coding", None, {"temperature": 0.0})
         mgr.apply_profile("m", "coding")
         s = mgr.get_settings("m")
         assert s.temperature == 0.0  # overwritten
-        assert s.top_p == 0.5  # preserved
-        assert s.top_k == 40  # preserved
+        # Universal fields absent from the profile reset to defaults
+        assert s.top_p is None
+        assert s.top_k is None
+        assert s.max_tokens is None
+        # Model-specific fields keep additive overlay (preset/template chips
+        # materialize universal-only profiles and must not disturb them)
+        assert s.dflash_enabled is True
+        # Excluded fields are never touched by profiles
+        assert s.ttl_seconds == 300
+        assert s.is_pinned is True
+
+    def test_apply_round_trip_clears_removed_universal_fields(self, mgr):
+        mgr.save_profile(
+            "m",
+            "p",
+            "P",
+            None,
+            {"max_context_window": 8192, "max_tokens": 512, "temperature": 0.7},
+        )
+        mgr.apply_profile("m", "p")
+        s = mgr.get_settings("m")
+        assert s.max_context_window == 8192
+        assert s.max_tokens == 512
+
+        mgr.update_profile("m", "p", settings={"temperature": 0.7})
+        mgr.apply_profile("m", "p")
+        s = mgr.get_settings("m")
+        assert s.max_context_window is None
+        assert s.max_tokens is None
+        assert s.temperature == 0.7
+
+    def test_apply_round_trip_clears_removed_kwargs(self, mgr):
+        mgr.save_profile(
+            "m",
+            "p",
+            "P",
+            None,
+            {
+                "chat_template_kwargs": {"enable_thinking": True},
+                "forced_ct_kwargs": ["enable_thinking"],
+            },
+        )
+        mgr.apply_profile("m", "p")
+        s = mgr.get_settings("m")
+        assert s.chat_template_kwargs == {"enable_thinking": True}
+        assert s.forced_ct_kwargs == ["enable_thinking"]
+
+        mgr.update_profile("m", "p", settings={"temperature": 0.5})
+        mgr.apply_profile("m", "p")
+        s = mgr.get_settings("m")
+        assert s.chat_template_kwargs is None
+        assert s.forced_ct_kwargs is None
+
+    def test_apply_overlays_model_specific_fields_when_present(self, mgr):
+        mgr.set_settings("m", ModelSettings(turboquant_kv_enabled=False))
+        mgr.save_profile("m", "p", "P", None, {"turboquant_kv_enabled": True})
+        mgr.apply_profile("m", "p")
+        assert mgr.get_settings("m").turboquant_kv_enabled is True
+
+    def test_apply_resolves_vlm_mtp_processor_conflict(self, tmp_path):
+        manager = ModelSettingsManager(tmp_path)
+        manager.set_settings(
+            "m",
+            ModelSettings(
+                vlm_mtp_enabled=True,
+                vlm_mtp_draft_model="qwen-mtp-drafter",
+            ),
+        )
+        manager.save_profile(
+            "m",
+            "penalty",
+            "Penalty",
+            None,
+            {"presence_penalty": 1.5},
+        )
+
+        applied = manager.apply_profile("m", "penalty")
+
+        assert applied is not None
+        assert applied.presence_penalty == 1.5
+        assert applied.vlm_mtp_enabled is False
+        assert applied.active_profile_name == "penalty"
+
+        persisted = ModelSettingsManager(tmp_path).get_settings("m")
+        assert persisted.presence_penalty == 1.5
+        assert persisted.vlm_mtp_enabled is False
+        assert persisted.active_profile_name == "penalty"
+
+    def test_apply_tolerates_legacy_empty_string_values(self, tmp_path):
+        profiles_file = tmp_path / "model_profiles.json"
+        profiles_file.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "profiles": {
+                        "m": {
+                            "p": {
+                                "name": "p",
+                                "display_name": "P",
+                                "created_at": "2026-06-01T00:00:00+00:00",
+                                "updated_at": "2026-06-01T00:00:00+00:00",
+                                "settings": {
+                                    "max_context_window": "",
+                                    "max_tokens": None,
+                                    "temperature": 0.3,
+                                },
+                            }
+                        }
+                    },
+                }
+            )
+        )
+        manager = ModelSettingsManager(tmp_path)
+        manager.apply_profile("m", "p")
+        s = manager.get_settings("m")
+        assert s.max_context_window is None
+        assert s.max_tokens is None
+        assert s.temperature == 0.3
 
     def test_apply_missing_profile_returns_none(self, mgr):
         assert mgr.apply_profile("m", "nope") is None
@@ -253,6 +376,60 @@ class TestProfileFieldFiltering:
         )
         p = mgr.get_profile("m", "p")
         assert p["settings"] == {"temperature": 0.5}
+
+    def test_save_and_update_drop_none_and_empty_string_values(self, mgr):
+        mgr.save_profile(
+            "m",
+            "p",
+            "P",
+            None,
+            {"temperature": 0.5, "max_tokens": None, "max_context_window": ""},
+        )
+        assert mgr.get_profile("m", "p")["settings"] == {"temperature": 0.5}
+
+        mgr.update_profile(
+            "m",
+            "p",
+            settings={"top_p": 0.9, "max_tokens": None, "reasoning_parser": ""},
+        )
+        assert mgr.get_profile("m", "p")["settings"] == {"top_p": 0.9}
+
+    def test_qwen_ane_prefill_fields_round_trip_as_model_specific(self, mgr):
+        settings = {
+            "qwen35_ane_prefill_enabled": True,
+            "qwen35_ane_prefill_sequence_length": 2048,
+            "qwen35_ane_prefill_tail_padding_min_tokens": 1357,
+            "qwen35_ane_prefill_fraction": 0.53,
+            "qwen35_ane_prefill_max_layers": 64,
+            "qwen35_ane_prefill_dual_ane": True,
+            "qwen35_ane_prefill_gdn": True,
+            "qwen35_ane_prefill_gdn_fraction": 0.50,
+            "qwen35_ane_prefill_gdn_max_layers": 48,
+        }
+
+        mgr.save_profile("m", "ane", "ANE", None, settings)
+        assert mgr.get_profile("m", "ane")["settings"] == settings
+
+        mgr.apply_profile("m", "ane")
+        applied = mgr.get_settings("m")
+        assert applied.qwen35_ane_prefill_enabled is True
+        assert applied.qwen35_ane_prefill_sequence_length == 2048
+        assert applied.qwen35_ane_prefill_tail_padding_min_tokens == 1357
+        assert applied.qwen35_ane_prefill_fraction == 0.53
+        assert applied.qwen35_ane_prefill_max_layers == 64
+        assert applied.qwen35_ane_prefill_dual_ane is True
+        assert applied.qwen35_ane_prefill_gdn is True
+        assert applied.qwen35_ane_prefill_gdn_fraction == 0.50
+        assert applied.qwen35_ane_prefill_gdn_max_layers == 48
+
+    def test_save_template_drops_none_and_empty_string_values(self, mgr):
+        mgr.save_template(
+            "t",
+            "T",
+            None,
+            {"temperature": 0.1, "max_tokens": None, "reasoning_parser": ""},
+        )
+        assert mgr.get_template("t")["settings"] == {"temperature": 0.1}
 
 
 class TestTemplatesCRUD:
